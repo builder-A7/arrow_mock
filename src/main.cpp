@@ -1,80 +1,50 @@
-#include <arrow/api.h>
-#include <arrow/io/api.h>
-#include <parquet/arrow/reader.h>
-#include <parquet/arrow/writer.h>
 #include <iostream>
+#include <vector>
+#include <arrow/api.h>
 
 int main() {
-    // ==========================================
-    // 1. CREATE AND WRITE
-    // ==========================================
-    std::cout << "1. Creating data..." << std::endl;
-    arrow::StringBuilder builder;
-    builder.Append("Alice");
-    builder.Append("Bob");
-    builder.AppendNull();
-    builder.Append("Dave");
+    // 1. GENERATE DATA (10 Days of Prices)
+    arrow::DoubleBuilder price_builder;
+    std::vector<double> raw_prices = {100.0, 102.0, 104.0, 103.0, 101.0, 105.0, 110.0, 108.0, 107.0, 110.0};
     
-    std::shared_ptr<arrow::Array> array;
-    builder.Finish(&array);
-
-    auto schema = arrow::schema({arrow::field("Strings", arrow::utf8())});
-    auto table = arrow::Table::Make(schema, {array});
-
-    std::shared_ptr<arrow::io::FileOutputStream> outfile;
-    auto outfile_result = arrow::io::FileOutputStream::Open("output.parquet");
-    if (outfile_result.ok()) {
-        outfile = *outfile_result;
-        parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, 10);
-        std::cout << "   File written." << std::endl;
+    for (double price : raw_prices) {
+        if (!price_builder.Append(price).ok()) return 1;
     }
 
-    // ==========================================
-    // 2. READ
-    // ==========================================
-    std::cout << "2. Reading data..." << std::endl;
-    std::shared_ptr<arrow::io::ReadableFile> infile;
-    auto infile_result = arrow::io::ReadableFile::Open("output.parquet");
-    if (!infile_result.ok()) {
-        std::cerr << "   Error reading file." << std::endl;
-        return 1;
-    }
-    infile = *infile_result;
+    std::shared_ptr<arrow::Array> price_array;
+    if (!price_builder.Finish(&price_array).ok()) return 1; // Fixed the warning!
 
-    std::unique_ptr<parquet::arrow::FileReader> reader;
-    parquet::arrow::FileReaderBuilder reader_builder;
-    reader_builder.Open(infile);
-    reader_builder.Build(&reader);
+    std::cout << "--- Daily Prices ---" << std::endl;
+    std::cout << price_array->ToString() << std::endl;
+    std::cout << "--------------------" << std::endl;
 
-    std::shared_ptr<arrow::Table> read_table;
-    reader->ReadTable(&read_table);
-    
-    // ==========================================
-    // 3. MANUAL COMPUTE
-    // ==========================================
-    std::cout << "3. Computing Sum (Manually)..." << std::endl;
-    
-    auto column = read_table->column(0)->Slice(2,2);
-    int64_t count = 0;
+    // 2. CALCULATE 3-DAY MOVING AVERAGE
+    int window_size = 3;
+    std::cout << "\n--- 3-Day Moving Averages ---" << std::endl;
 
-    // A column in a Table is a "ChunkedArray" (it might be split into pieces).
-    // We iterate over each "chunk" (which is a standard Array).
-    for (const auto& chunk : column->chunks()) {
+    // We loop until we hit the end of the last window
+    for (int64_t i = 0; i <= price_array->length() - window_size; ++i) {
         
-        // We must cast the generic Array to the specific type we expect (Int64Array)
-        // This gives us access to Value() and IsValid()
-        auto string_chunk = std::static_pointer_cast<arrow::StringArray>(chunk);
-        std::cout << "String Chunk Value:" << string_chunk << "\n";
-        for (int64_t i = 0; i < string_chunk->length(); ++i) {
-            // CRITICAL: Always check if the value is valid (not null) before using it!
-            if (string_chunk->IsValid(i)) {
-                std::cout << string_chunk->GetString(i) << "\n";
-                count++;
-            }
-        }
-    }
+        // A. CREATE A SLICE (Zero-Copy!)
+        // "Give me a view starting at 'i' with length '3'"
+        std::shared_ptr<arrow::Array> window_slice = price_array->Slice(i, window_size);
 
-    std::cout << "   (Calculated from " << count << " non-null values)" << std::endl;
+        // B. COMPUTE AVERAGE OF THE SLICE
+        double sum = 0.0;
+        
+        // Cast the generic slice back to DoubleArray to read values
+        auto double_slice = std::static_pointer_cast<arrow::DoubleArray>(window_slice);
+        
+        for (int64_t j = 0; j < double_slice->length(); ++j) {
+            sum += double_slice->Value(j);
+        }
+        
+        double avg = sum / window_size;
+
+        // C. PRINT
+        // We print 'Day i+3' because the average represents the end of the period
+        std::cout << "Day " << (i + window_size) << ": " << avg << std::endl;
+    }
 
     return 0;
 }
