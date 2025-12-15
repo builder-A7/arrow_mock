@@ -1,6 +1,7 @@
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <parquet/arrow/reader.h>
+#include <arrow/compute/api.h>
 #include <iostream>
 
 int main() {
@@ -19,7 +20,7 @@ int main() {
     // We explicitly cast our specific file to the generic "RandomAccessFile" type
     std::shared_ptr<arrow::io::RandomAccessFile> input_file = infile;
     std::unique_ptr<parquet::arrow::FileReader> reader;
-    
+
     // Use the Builder helper to set up the reader
     parquet::arrow::FileReaderBuilder builder;
     auto open_status = builder.Open(input_file);
@@ -50,6 +51,28 @@ int main() {
     std::cout << "Columns: " << table->num_columns() << std::endl;
     std::cout << "---------------------------------" << std::endl;
     std::cout << table->ToString() << std::endl;
+
+    // 5. Compute: Calculate the Sum
+    std::cout << "Calculating sum of 'numbers' column..." << std::endl;
+
+    // Get the column from the table (it returns a ChunkedArray)
+    auto column = table->column(0);
+
+    // Call the "sum" function from the compute registry
+    // We pass the function name and the input data
+    auto sum_result = arrow::compute::CallFunction("sum", {column});
+
+    if (!sum_result.ok()) {
+        std::cerr << "Compute failed: " << sum_result.status().ToString() << std::endl;
+        return 1;
+    }
+
+    // Extract the answer
+    // The result comes back wrapped in a "Datum" (a flexible data holder).
+    // We unwrap it into a specific Scalar type to print it.
+    auto sum_scalar = sum_result->scalar_as<arrow::Int64Scalar>();
+
+    std::cout << "Sum: " << sum_scalar.value << std::endl;
 
     return 0;
 }
