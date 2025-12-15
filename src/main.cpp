@@ -1,43 +1,55 @@
 #include <arrow/api.h>
 #include <arrow/io/api.h>
-#include <parquet/arrow/writer.h>
+#include <parquet/arrow/reader.h>
 #include <iostream>
 
 int main() {
-    // 1. Create Data
-    arrow::Int64Builder builder;
-    builder.Append(1);
-    builder.Append(2);
-    builder.AppendNull();
-    builder.Append(4);
-    
-    std::shared_ptr<arrow::Array> array;
-    builder.Finish(&array);
+    std::cout << "Attempting to read 'output.parquet'..." << std::endl;
 
-    // 2. Create Schema & Table
-    auto schema = arrow::schema({
-        arrow::field("numbers", arrow::int64())
-    });
-    auto table = arrow::Table::Make(schema, {array});
+    // 1. Open the file for reading
+    // We use ReadableFile instead of FileOutputStream
+    auto infile_result = arrow::io::ReadableFile::Open("output.parquet");
+    if (!infile_result.ok()) {
+        std::cerr << "Error opening file: " << infile_result.status().ToString() << std::endl;
+        return 1;
+    }
+    std::shared_ptr<arrow::io::ReadableFile> infile = *infile_result;
 
-    // 3. Open File (THE FIX IS HERE)
-    // We capture the "Result" object first.
-    auto outfile_result = arrow::io::FileOutputStream::Open("output.parquet");
+    // 2. Create the Parquet Reader
+    // We explicitly cast our specific file to the generic "RandomAccessFile" type
+    std::shared_ptr<arrow::io::RandomAccessFile> input_file = infile;
+    std::unique_ptr<parquet::arrow::FileReader> reader;
     
-    // Check if the file opened successfully
-    if (!outfile_result.ok()) {
-        std::cerr << "Error opening file: " << outfile_result.status().ToString() << std::endl;
+    // Use the Builder helper to set up the reader
+    parquet::arrow::FileReaderBuilder builder;
+    auto open_status = builder.Open(input_file);
+    if (!open_status.ok()) {
+        std::cerr << "Error opening file with builder: " << open_status.ToString() << std::endl;
         return 1;
     }
 
-    // Extract the actual file pointer from the Result using the dereference operator (*)
-    std::shared_ptr<arrow::io::FileOutputStream> outfile = *outfile_result;
+    // Build the actual reader
+    auto build_status = builder.Build(&reader);
+    if (!build_status.ok()) {
+        std::cerr << "Error creating reader: " << build_status.ToString() << std::endl;
+        return 1;
+    }
 
-    // 4. Write to Parquet
-    // Now 'outfile' is a valid pointer, so this won't crash.
-    parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, 10);
+    // 3. Read the entire file into a Table
+    std::shared_ptr<arrow::Table> table;
+    auto read_status = reader->ReadTable(&table);
+    
+    if (!read_status.ok()) {
+        std::cerr << "Error reading table: " << read_status.ToString() << std::endl;
+        return 1;
+    }
 
-    std::cout << "Parquet file 'output.parquet' written successfully!" << std::endl;
+    // 4. Verify the data
+    std::cout << "Read successful!" << std::endl;
+    std::cout << "Rows: " << table->num_rows() << std::endl;
+    std::cout << "Columns: " << table->num_columns() << std::endl;
+    std::cout << "---------------------------------" << std::endl;
+    std::cout << table->ToString() << std::endl;
 
     return 0;
 }
