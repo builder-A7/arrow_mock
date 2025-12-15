@@ -54,7 +54,7 @@ int main() {
     // ==========================================
     std::cout << "3. Computing Sum (Manually)..." << std::endl;
     
-    auto column = read_table->column(0);
+    auto column = read_table->column(0)->Slice(2,2);
     int64_t sum = 0;
     int64_t count = 0;
 
