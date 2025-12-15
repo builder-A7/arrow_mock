@@ -56,5 +56,32 @@ int main() {
     std::cout << table->schema()->ToString() << std::endl;
     std::cout << "---------------------------------" << std::endl;
 
+    // 6. Write to Parquet
+    std::cout << "Writing to output.parquet..." << std::endl;
+    std::shared_ptr<arrow::io::FileOutputStream> outfile;
+    auto outfile_result = arrow::io::FileOutputStream::Open("output.parquet");
+    
+    if (!outfile_result.ok()) {
+        std::cerr << "Error creating output file: " << outfile_result.status().ToString() << std::endl;
+        return 1;
+    }
+    outfile = *outfile_result;
+
+    // Write the table
+    // We use a small chunk_size (e.g., 10) for this tiny example.
+    auto write_status = parquet::arrow::WriteTable(
+        *table, 
+        arrow::default_memory_pool(), 
+        outfile, 
+        10
+    );
+
+    if (!write_status.ok()) {
+        std::cerr << "Error writing parquet: " << write_status.ToString() << std::endl;
+        return 1;
+    }
+
+    std::cout << "✅ Conversion Complete: input.csv -> output.parquet" << std::endl;
+
     return 0;
 }
