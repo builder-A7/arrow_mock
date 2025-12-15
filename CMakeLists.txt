@@ -3,11 +3,14 @@ project(ArrowMock)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Find the installed Arrow package
+# 1. Find the libraries
 find_package(Arrow REQUIRED)
+find_package(Parquet REQUIRED)  # <--- NEW: Find the Parquet package
 
-# Define our executable
 add_executable(arrow_mock src/main.cpp)
 
-# Link Arrow to our executable
-target_link_libraries(arrow_mock PRIVATE Arrow::arrow_shared)
+# 2. Link the libraries
+target_link_libraries(arrow_mock PRIVATE 
+    Arrow::arrow_shared
+    Parquet::parquet_shared     # <--- NEW: Link the Parquet library
+)

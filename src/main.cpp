@@ -1,33 +1,43 @@
 #include <arrow/api.h>
+#include <arrow/io/api.h>
+#include <parquet/arrow/writer.h>
 #include <iostream>
 
 int main() {
-    // 1. Initialize the Builder
-    // We use a specific builder for 64-bit integers.
+    // 1. Create Data
     arrow::Int64Builder builder;
-
-    // 2. Pour data into the builder
-    // Standard arrow functions return a "Status" to check for errors, 
-    // but we will ignore that for this simple demo (using .ok() checks implicitly).
     builder.Append(1);
     builder.Append(2);
-    builder.AppendNull(); // Explicitly adding a "null" value
+    builder.AppendNull();
     builder.Append(4);
-
-    // 3. Finish the Array
-    // This locks the memory and creates the immutable object.
+    
     std::shared_ptr<arrow::Array> array;
-    auto status = builder.Finish(&array);
+    builder.Finish(&array);
 
-    if (!status.ok()) {
-        std::cerr << "Builder failed: " << status.ToString() << std::endl;
+    // 2. Create Schema & Table
+    auto schema = arrow::schema({
+        arrow::field("numbers", arrow::int64())
+    });
+    auto table = arrow::Table::Make(schema, {array});
+
+    // 3. Open File (THE FIX IS HERE)
+    // We capture the "Result" object first.
+    auto outfile_result = arrow::io::FileOutputStream::Open("output.parquet");
+    
+    // Check if the file opened successfully
+    if (!outfile_result.ok()) {
+        std::cerr << "Error opening file: " << outfile_result.status().ToString() << std::endl;
         return 1;
     }
 
-    // 4. Verify the result
-    // Arrow has a built-in ToString() method for debugging.
-    std::cout << "Array created successfully!" << std::endl;
-    std::cout << array->ToString() << std::endl;
+    // Extract the actual file pointer from the Result using the dereference operator (*)
+    std::shared_ptr<arrow::io::FileOutputStream> outfile = *outfile_result;
+
+    // 4. Write to Parquet
+    // Now 'outfile' is a valid pointer, so this won't crash.
+    parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, 10);
+
+    std::cout << "Parquet file 'output.parquet' written successfully!" << std::endl;
 
     return 0;
 }
