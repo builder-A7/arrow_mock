@@ -1,0 +1,21 @@
+# --- Build Artifacts ---
+build/
+cmake-build-debug/
+bin/
+lib/
+*.o
+
+# --- Data Output (Don't commit large data files) ---
+*.parquet
+*.arrow
+*.csv
+
+# --- macOS System Files ---
+.DS_Store
+.DS_Store?
+
+# --- Editors/IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
