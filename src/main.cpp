@@ -1,80 +1,88 @@
-#include <arrow/api.h>
-#include <arrow/io/api.h>
-#include <parquet/arrow/reader.h>
-#include <parquet/arrow/writer.h>
 #include <iostream>
+#include <vector>
+#include <random>
+#include <chrono> // Added for timing
+#include <arrow/api.h>
 
 int main() {
     // ==========================================
-    // 1. CREATE AND WRITE
+    // 1. GENERATE DATA
     // ==========================================
-    std::cout << "1. Creating data..." << std::endl;
-    arrow::StringBuilder builder;
-    builder.Append("Alice");
-    builder.Append("Bob");
-    builder.AppendNull();
-    builder.Append("Dave");
-    
-    std::shared_ptr<arrow::Array> array;
-    builder.Finish(&array);
+    int64_t num_rows = 1000000; 
+    std::cout << "1. Generating " << num_rows << " log entries..." << std::endl;
 
-    auto schema = arrow::schema({arrow::field("Strings", arrow::utf8())});
-    auto table = arrow::Table::Make(schema, {array});
+    arrow::Int64Builder timestamp_builder;
+    arrow::StringBuilder level_builder;
+    arrow::StringBuilder message_builder;
 
-    std::shared_ptr<arrow::io::FileOutputStream> outfile;
-    auto outfile_result = arrow::io::FileOutputStream::Open("output.parquet");
-    if (outfile_result.ok()) {
-        outfile = *outfile_result;
-        parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, 10);
-        std::cout << "   File written." << std::endl;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, 9); 
+
+    for (int64_t i = 0; i < num_rows; ++i) {
+        if (!timestamp_builder.Append(i).ok()) return 1;
+        int roll = dis(gen);
+        if (roll < 7) {
+            if (!level_builder.Append("INFO").ok()) return 1;
+            if (!message_builder.Append("User login successful").ok()) return 1;
+        } else if (roll < 9) {
+            if (!level_builder.Append("WARN").ok()) return 1;
+            if (!message_builder.Append("High memory usage detected").ok()) return 1;
+        } else {
+            if (!level_builder.Append("ERROR").ok()) return 1; 
+            if (!message_builder.Append("Database connection failed").ok()) return 1;
+        }
     }
 
-    // ==========================================
-    // 2. READ
-    // ==========================================
-    std::cout << "2. Reading data..." << std::endl;
-    std::shared_ptr<arrow::io::ReadableFile> infile;
-    auto infile_result = arrow::io::ReadableFile::Open("output.parquet");
-    if (!infile_result.ok()) {
-        std::cerr << "   Error reading file." << std::endl;
-        return 1;
-    }
-    infile = *infile_result;
+    std::shared_ptr<arrow::Array> timestamp_array;
+    std::shared_ptr<arrow::Array> level_array;
+    std::shared_ptr<arrow::Array> message_array;
 
-    std::unique_ptr<parquet::arrow::FileReader> reader;
-    parquet::arrow::FileReaderBuilder reader_builder;
-    reader_builder.Open(infile);
-    reader_builder.Build(&reader);
+    timestamp_builder.Finish(&timestamp_array);
+    level_builder.Finish(&level_array);
+    message_builder.Finish(&message_array);
 
-    std::shared_ptr<arrow::Table> read_table;
-    reader->ReadTable(&read_table);
-    
-    // ==========================================
-    // 3. MANUAL COMPUTE
-    // ==========================================
-    std::cout << "3. Computing Sum (Manually)..." << std::endl;
-    
-    auto column = read_table->column(0)->Slice(2,2);
-    int64_t count = 0;
+    auto schema = arrow::schema({
+        arrow::field("timestamp", arrow::int64()),
+        arrow::field("level", arrow::utf8()),
+        arrow::field("message", arrow::utf8())
+    });
 
-    // A column in a Table is a "ChunkedArray" (it might be split into pieces).
-    // We iterate over each "chunk" (which is a standard Array).
-    for (const auto& chunk : column->chunks()) {
-        
-        // We must cast the generic Array to the specific type we expect (Int64Array)
-        // This gives us access to Value() and IsValid()
+    auto table = arrow::Table::Make(schema, {timestamp_array, level_array, message_array});
+    std::cout << "   Table created in memory." << std::endl;
+
+    // ==========================================
+    // 2. ANALYZE (Find Errors)
+    // ==========================================
+    std::cout << "2. Scanning for ERRORS..." << std::endl;
+
+    // Start Timer
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    int64_t error_count = 0;
+    auto level_column = table->column(1); // Column 1 is "level"
+
+    // Iterate over chunks
+    for (const auto& chunk : level_column->chunks()) {
         auto string_chunk = std::static_pointer_cast<arrow::StringArray>(chunk);
-        std::cout << "String Chunk Value:" << string_chunk << "\n";
+        
+        // Iterate over rows in this chunk
         for (int64_t i = 0; i < string_chunk->length(); ++i) {
-            // CRITICAL: Always check if the value is valid (not null) before using it!
-            if (string_chunk->IsValid(i)) {
-                std::cout << string_chunk->GetString(i) << "\n";
-                count++;
+            // We use GetView(i) because it's slightly faster than GetString(i)
+            // It returns a lightweight string_view instead of a full std::string copy.
+            if (string_chunk->GetView(i) == "ERROR") {
+                error_count++;
             }
         }
     }
 
-    std::cout << "   (Calculated from " << count << " non-null values)" << std::endl;
+    // Stop Timer
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end_time - start_time;
+
+    std::cout << "   Analysis Complete!" << std::endl;
+    std::cout << "   Found " << error_count << " ERRORs." << std::endl;
+    std::cout << "   Time taken: " << diff.count() << " seconds." << std::endl;
 
     return 0;
 }
