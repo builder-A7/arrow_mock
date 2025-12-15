@@ -1,80 +1,43 @@
-#include <arrow/api.h>
-#include <arrow/io/api.h>
-#include <parquet/arrow/reader.h>
-#include <parquet/arrow/writer.h>
 #include <iostream>
+#include <arrow/api.h>
+#include <arrow/csv/api.h>  // <--- The new header!
+#include <arrow/io/api.h>
+#include <parquet/arrow/writer.h>
 
 int main() {
-    // ==========================================
-    // 1. CREATE AND WRITE
-    // ==========================================
-    std::cout << "1. Creating data..." << std::endl;
-    arrow::StringBuilder builder;
-    builder.Append("Alice");
-    builder.Append("Bob");
-    builder.AppendNull();
-    builder.Append("Dave");
+    std::string csv_filename = "../input.csv"; // Assuming running from build/
     
-    std::shared_ptr<arrow::Array> array;
-    builder.Finish(&array);
+    std::cout << "Attempting to read CSV: " << csv_filename << std::endl;
 
-    auto schema = arrow::schema({arrow::field("Strings", arrow::utf8())});
-    auto table = arrow::Table::Make(schema, {array});
-
-    std::shared_ptr<arrow::io::FileOutputStream> outfile;
-    auto outfile_result = arrow::io::FileOutputStream::Open("output.parquet");
-    if (outfile_result.ok()) {
-        outfile = *outfile_result;
-        parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, 10);
-        std::cout << "   File written." << std::endl;
-    }
-
-    // ==========================================
-    // 2. READ
-    // ==========================================
-    std::cout << "2. Reading data..." << std::endl;
-    std::shared_ptr<arrow::io::ReadableFile> infile;
-    auto infile_result = arrow::io::ReadableFile::Open("output.parquet");
-    if (!infile_result.ok()) {
-        std::cerr << "   Error reading file." << std::endl;
+    // 1. Open File
+    auto input_file_result = arrow::io::ReadableFile::Open(csv_filename);
+    if (!input_file_result.ok()) {
+        std::cerr << "Error opening file: " << input_file_result.status().ToString() << std::endl;
         return 1;
     }
-    infile = *infile_result;
+    std::shared_ptr<arrow::io::ReadableFile> input_file = *input_file_result;
 
-    std::unique_ptr<parquet::arrow::FileReader> reader;
-    parquet::arrow::FileReaderBuilder reader_builder;
-    reader_builder.Open(infile);
-    reader_builder.Build(&reader);
+    // 2. Configure CSV Reader (Auto-detect types)
+    arrow::io::IOContext io_context = arrow::io::default_io_context();
+    auto read_options = arrow::csv::ReadOptions::Defaults();
+    auto parse_options = arrow::csv::ParseOptions::Defaults();
+    auto convert_options = arrow::csv::ConvertOptions::Defaults();
 
-    std::shared_ptr<arrow::Table> read_table;
-    reader->ReadTable(&read_table);
+    // 3. Create Reader
+    auto reader_result = arrow::csv::TableReader::Make(
+        io_context,
+        input_file,
+        read_options,
+        parse_options,
+        convert_options
+    );
     
-    // ==========================================
-    // 3. MANUAL COMPUTE
-    // ==========================================
-    std::cout << "3. Computing Sum (Manually)..." << std::endl;
-    
-    auto column = read_table->column(0)->Slice(2,2);
-    int64_t count = 0;
-
-    // A column in a Table is a "ChunkedArray" (it might be split into pieces).
-    // We iterate over each "chunk" (which is a standard Array).
-    for (const auto& chunk : column->chunks()) {
-        
-        // We must cast the generic Array to the specific type we expect (Int64Array)
-        // This gives us access to Value() and IsValid()
-        auto string_chunk = std::static_pointer_cast<arrow::StringArray>(chunk);
-        std::cout << "String Chunk Value:" << string_chunk << "\n";
-        for (int64_t i = 0; i < string_chunk->length(); ++i) {
-            // CRITICAL: Always check if the value is valid (not null) before using it!
-            if (string_chunk->IsValid(i)) {
-                std::cout << string_chunk->GetString(i) << "\n";
-                count++;
-            }
-        }
+    if (!reader_result.ok()) {
+        std::cerr << "Error creating reader: " << reader_result.status().ToString() << std::endl;
+        return 1;
     }
-
-    std::cout << "   (Calculated from " << count << " non-null values)" << std::endl;
+    
+    std::cout << "CSV Reader created successfully." << std::endl;
 
     return 0;
 }
